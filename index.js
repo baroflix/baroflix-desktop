@@ -53,7 +53,7 @@ function createWindow() {
         frame: false, show: false,
         title: 'baroflix',
         backgroundColor: '#090909',
-        icon: path.join(__dirname, 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+        icon: path.join(__dirname, 'build', process.platform === 'win32' ? 'icon2.ico' : 'icon2.png'),
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
