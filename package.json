@@ -24,8 +24,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "twój-login-github",
-        "repo": "twoje-repozytorium"
+        "owner": "baroflix",
+        "repo": "baroflix-desktop"
       }
     ],
     "productName": "Baroflix",
@@ -39,7 +39,7 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "build/icon.png"
+      "icon": "build/icon.ico"
     },
     "mac": {
       "target": "dmg",
@@ -55,7 +55,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon": "build/icon.png"
+      "installerIcon": "build/icon.ico"
     }
   }
 }
