@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "splash-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-s", ".", "-p", "4242", "--no-clipboard"],
+      "port": 4242
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "name": "baroflixdesktop",
+  "version": "1.0.0",
+  "description": "Baroflix Desktop — Electron wrapper for baroflix.github.io",
+  "main": "index.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "discord-rpc": "^4.0.1",
+    "electron-store": "^8.2.0",
+    "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.baro.baroflix",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "twój-login-github",
+        "repo": "twoje-repozytorium"
+      }
+    ],
+    "productName": "Baroflix",
+    "copyright": "Copyright © 2025 Baro",
+    "files": [
+      "index.js",
+      "preload.js",
+      "settings.html",
+      "build/**",
+      "images/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.icns"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.png"
+    }
+  }
+}

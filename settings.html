@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Baroflix Settings</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            padding: 25px;
+            background: #0a0a0a;
+            color: #eee;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        h2 {
+            margin-top: 0;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #1e1e1e;
+            padding-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h2 img {
+            height: 22px;
+            width: auto;
+            display: block;
+            opacity: 0.95;
+        }
+
+        h2 span.sep {
+            color: rgba(255,255,255,0.2);
+            font-weight: 300;
+            font-size: 18px;
+        }
+
+        h2 span.label {
+            font-size: 15px;
+            font-weight: 500;
+            color: rgba(255,255,255,0.5);
+            letter-spacing: 0.2px;
+        }
+
+        .scrollable-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding-right: 5px;
+            margin-bottom: 20px;
+        }
+
+        .scrollable-content::-webkit-scrollbar { width: 6px; }
+        .scrollable-content::-webkit-scrollbar-track { background: transparent; }
+        .scrollable-content::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+        .scrollable-content::-webkit-scrollbar-thumb:hover { background: #444; }
+
+        .form-group {
+            background: #141414;
+            padding: 16px 20px;
+            border-radius: 10px;
+            border: 1px solid #1e1e1e;
+            margin-bottom: 12px;
+            box-sizing: border-box;
+        }
+
+        .form-group.row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .label-text {
+            display: block;
+            font-weight: 600;
+            font-size: 14px;
+            color: #fff;
+        }
+
+        .help-text {
+            color: #777;
+            display: block;
+            margin-top: 4px;
+            font-size: 11.5px;
+            line-height: 1.4;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 11px 14px;
+            background: #0a0a0a;
+            color: white;
+            border: 1px solid #252525;
+            border-radius: 8px;
+            box-sizing: border-box;
+            font-size: 13px;
+            margin-top: 10px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #ff3d3d;
+            box-shadow: 0 0 0 3px rgba(255, 61, 61, 0.15);
+        }
+
+        .shortcut-input {
+            cursor: pointer;
+            text-align: center;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            background: #0a0a0a !important;
+            border: 1px dashed #444 !important;
+            color: #ff3d3d !important;
+        }
+
+        .shortcut-input:focus {
+            border-style: solid !important;
+        }
+
+        /* Toggle switches */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 46px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
+        .switch input { opacity: 0; width: 0; height: 0; }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #252525;
+            transition: .25s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: #fff;
+            transition: .25s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        }
+
+        input:checked + .slider { background-color: #ff3d3d; }
+        input:checked + .slider:before { transform: translateX(22px); }
+
+        /* Volume slider */
+        .volume-container {
+            margin-top: 12px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            flex-grow: 1;
+            height: 5px;
+            background: #252525;
+            border-radius: 3px;
+            outline: none;
+            margin: 0;
+            cursor: pointer;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #ff3d3d;
+            cursor: pointer;
+            border: none;
+            transition: transform 0.1s ease;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.25);
+            background: #ff5555;
+        }
+
+        #volumeValue {
+            font-family: ui-monospace, monospace;
+            font-size: 13px;
+            font-weight: bold;
+            color: #ff3d3d;
+            min-width: 45px;
+            text-align: right;
+        }
+
+        /* Save button */
+        button.save-btn {
+            padding: 13px 20px;
+            background: #ff3d3d;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 14px;
+            width: 100%;
+            transition: background 0.15s ease, transform 0.1s ease;
+            box-shadow: 0 4px 14px rgba(255, 61, 61, 0.25);
+            flex-shrink: 0;
+        }
+
+        button.save-btn:hover  { background: #e02e2e; }
+        button.save-btn:active { transform: scale(0.98); }
+    </style>
+</head>
+<body>
+    <h2>
+        <img src="./images/baroflix_oneline.png" alt="baroflix" draggable="false" />
+        <span class="sep">/</span>
+        <span class="label">settings</span>
+    </h2>
+
+    <div class="scrollable-content">
+
+        <!-- Custom URL (for dev / mirror domains) -->
+        <div class="form-group">
+            <span class="label-text">App URL</span>
+            <input type="text" id="customUrl" placeholder="https://baroflix.github.io" />
+            <span class="help-text">Update this if baroflix moves to a new domain or you want to use a local dev build.</span>
+        </div>
+
+        <!-- PiP Shortcut -->
+        <div class="form-group">
+            <span class="label-text">Picture-in-Picture Shortcut</span>
+            <input type="text" id="pipShortcut" class="shortcut-input" readonly placeholder="Click and press keys…" />
+            <span class="help-text">Click the box and press any key combination to set the floating window shortcut.</span>
+        </div>
+
+        <!-- Discord RPC -->
+        <div class="form-group row">
+            <div>
+                <span class="label-text">Discord Rich Presence</span>
+                <span class="help-text">Show what you're watching on Discord. Toggle off for private sessions.</span>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="discordEnabled" />
+                <span class="slider"></span>
+            </label>
+        </div>
+
+        <!-- Cloudflare DNS -->
+        <div class="form-group row">
+            <div>
+                <span class="label-text">Secure Cloudflare DNS (1.1.1.1)</span>
+                <span class="help-text">Bypasses ISP-level DNS blocks. Unblocks the site if it's restricted in your region. (Requires restart)</span>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="cloudflareDns" />
+                <span class="slider"></span>
+            </label>
+        </div>
+
+        <!-- Hardware Acceleration -->
+        <div class="form-group row">
+            <div>
+                <span class="label-text">Hardware Acceleration</span>
+                <span class="help-text">Uses GPU for smooth 4K/60fps playback. Toggle off if you see green screen glitches or stuttering. (Requires restart)</span>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="hwAccel" />
+                <span class="slider"></span>
+            </label>
+        </div>
+
+        <!-- Volume Boost -->
+        <div class="form-group">
+            <span class="label-text">Audio Volume Booster</span>
+            <span class="help-text">Amplify video audio beyond the normal maximum. 100% is the default stream level.</span>
+            <div class="volume-container">
+                <input type="range" id="volumeBoost" min="100" max="300" step="10" value="100" />
+                <span id="volumeValue">100%</span>
+            </div>
+        </div>
+
+    </div>
+
+    <button class="save-btn" onclick="save()">Save Settings</button>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        ipcRenderer.send('get-settings');
+        ipcRenderer.on('settings-data', (_event, data) => {
+            document.getElementById('customUrl').value        = data.customUrl;
+            document.getElementById('pipShortcut').value      = data.pipShortcut || 'CommandOrControl+P';
+            document.getElementById('discordEnabled').checked = data.discordEnabled !== false;
+            document.getElementById('cloudflareDns').checked  = data.cloudflareDns === true;
+            document.getElementById('hwAccel').checked        = data.hardwareAcceleration !== false;
+
+            const vol = data.volumeBoost || 100;
+            document.getElementById('volumeBoost').value = vol;
+            document.getElementById('volumeValue').textContent = vol + '%';
+        });
+
+        document.getElementById('volumeBoost').addEventListener('input', (e) => {
+            document.getElementById('volumeValue').textContent = e.target.value + '%';
+        });
+
+        // Shortcut recorder
+        const shortcutInput = document.getElementById('pipShortcut');
+        shortcutInput.addEventListener('keydown', (e) => {
+            e.preventDefault();
+            const keys = [];
+            if (e.ctrlKey || e.metaKey) keys.push('CommandOrControl');
+            if (e.shiftKey) keys.push('Shift');
+            if (e.altKey)   keys.push('Alt');
+
+            let key = e.key;
+            if (['Control', 'Shift', 'Alt', 'Meta'].includes(key)) return;
+            if (key === ' ')              key = 'Space';
+            else if (key.length === 1)   key = key.toUpperCase();
+            else if (key.startsWith('Arrow')) key = key.replace('Arrow', '');
+
+            keys.push(key);
+            shortcutInput.value = keys.join('+');
+        });
+
+        function save() {
+            ipcRenderer.send('save-settings', {
+                customUrl:            document.getElementById('customUrl').value,
+                pipShortcut:          document.getElementById('pipShortcut').value,
+                discordEnabled:       document.getElementById('discordEnabled').checked,
+                cloudflareDns:        document.getElementById('cloudflareDns').checked,
+                hardwareAcceleration: document.getElementById('hwAccel').checked,
+                volumeBoost:          parseInt(document.getElementById('volumeBoost').value, 10)
+            });
+        }
+
+        document.getElementById('customUrl').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') save();
+        });
+    </script>
+</body>
+</html>
