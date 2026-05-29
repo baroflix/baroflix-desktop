@@ -10,6 +10,53 @@ if (store.get('hardwareAcceleration', true) === false) {
     app.disableHardwareAcceleration();
 }
 
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+    app.quit();
+} else {
+    app.on('second-instance', (event, commandLine, workingDirectory) => {
+        if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+        }
+        const url = commandLine.find(arg => arg.startsWith('baroflix://'));
+        if (url && mainWindow) {
+            const defaultUrl = 'https://baroflix.github.io';
+            const baseUrl = store.get('customUrl', defaultUrl);
+            const finalBaseUrl = baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`;
+            try {
+                const parsedUrl = new URL(url);
+                mainWindow.loadURL(finalBaseUrl + (finalBaseUrl.endsWith('/') ? '' : '/') + parsedUrl.hash);
+            } catch (e) {
+                console.error('Failed to parse deep link URL', e);
+            }
+        }
+    });
+}
+
+if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+        app.setAsDefaultProtocolClient('baroflix', process.execPath, [path.resolve(process.argv[1])]);
+    }
+} else {
+    app.setAsDefaultProtocolClient('baroflix');
+}
+
+app.on('open-url', (event, url) => {
+    event.preventDefault();
+    if (mainWindow && url.startsWith('baroflix://')) {
+        const defaultUrl = 'https://baroflix.github.io';
+        const baseUrl = store.get('customUrl', defaultUrl);
+        const finalBaseUrl = baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`;
+        try {
+            const parsedUrl = new URL(url);
+            mainWindow.loadURL(finalBaseUrl + (finalBaseUrl.endsWith('/') ? '' : '/') + parsedUrl.hash);
+        } catch (e) {
+            console.error('Failed to parse open-url deep link', e);
+        }
+    }
+});
+
 let mainWindow;
 let splashWindow;
 let rpc;
@@ -90,6 +137,14 @@ function createWindow() {
             const base    = store.get('customUrl', defaultUrl);
             const allowed = ['baroflix.github.io', 'localhost', '127.0.0.1',
                              'supabase.co', 'accounts.google.com'];
+
+            if (parsed.hostname.includes('supabase.co') && parsed.pathname.includes('/auth/v1/authorize')) {
+                event.preventDefault();
+                parsed.searchParams.set('redirect_to', 'baroflix://auth');
+                shell.openExternal(parsed.toString());
+                return;
+            }
+
             try { allowed.push(new URL(base).hostname); } catch (_) {}
             if (!allowed.some(h => parsed.hostname === h || parsed.hostname.endsWith('.' + h))) {
                 event.preventDefault();
