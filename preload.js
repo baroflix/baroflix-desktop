@@ -171,9 +171,12 @@ async function injectAppSettings() {
     if (!container) return;
 
     // Load current values from main process
-    let cfg = {};
+    let cfg = {}, appVersion = '';
     try {
-        cfg = await ipcRenderer.invoke('get-settings-data');
+        [cfg, appVersion] = await Promise.all([
+            ipcRenderer.invoke('get-settings-data'),
+            ipcRenderer.invoke('get-app-version').catch(() => '')
+        ]);
     } catch (_) { return; }
 
     const A = 'var(--accent, #ff3d3d)';
@@ -254,6 +257,16 @@ async function injectAppSettings() {
                 display:none;text-align:center;margin-top:10px;
                 font-size:13px;color:rgba(255,255,255,.45);
             }
+            /* Update check */
+            #bf-check-update-btn {
+                padding:6px 12px;background:transparent;
+                color:${A};border:1px solid ${A};border-radius:8px;
+                font-size:12px;font-weight:600;cursor:pointer;
+                transition:background .15s;white-space:nowrap;flex-shrink:0;
+            }
+            #bf-check-update-btn:hover:not(:disabled) { background:rgba(255,61,61,.12); }
+            #bf-check-update-btn:disabled { opacity:.5;cursor:default; }
+            #bf-ver-status { transition:color .3s; }
         </style>
 
         <h3>
@@ -319,6 +332,15 @@ async function injectAppSettings() {
                    value="${cfg.pipShortcut || 'CommandOrControl+P'}" />
         </div>
 
+        <!-- Version & Updates -->
+        <div class="bf-row" style="align-items:center;">
+            <div>
+                <div class="bf-lbl">desktop app</div>
+                <div class="bf-hint" id="bf-ver-status">${appVersion ? `v${appVersion}` : ''}</div>
+            </div>
+            <button id="bf-check-update-btn">check for updates</button>
+        </div>
+
         <button id="bf-save-btn">save app settings</button>
         <div id="bf-save-ok">✓ saved</div>
     `;
@@ -346,6 +368,27 @@ async function injectAppSettings() {
         else if (k.startsWith('Arrow')) k = k.replace('Arrow', '');
         keys.push(k);
         pipInput.value = keys.join('+');
+    });
+
+    // Check for updates
+    document.getElementById('bf-check-update-btn').addEventListener('click', async () => {
+        const btn    = document.getElementById('bf-check-update-btn');
+        const status = document.getElementById('bf-ver-status');
+        btn.disabled = true;
+        btn.textContent = 'checking…';
+        const result = await ipcRenderer.invoke('check-for-updates').catch(() => 'error');
+        btn.disabled = false;
+        btn.textContent = 'check for updates';
+        if (result === 'available') {
+            status.textContent = 'update available — downloading…';
+            status.style.color = A;
+        } else if (result === 'not-available') {
+            status.textContent = `v${appVersion} — you're up to date ✓`;
+            status.style.color = '';
+        } else {
+            status.textContent = `v${appVersion} — couldn't check for updates`;
+            status.style.color = '';
+        }
     });
 
     // Save

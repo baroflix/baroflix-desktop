@@ -240,6 +240,32 @@ ipcMain.on('save-settings', (_event, data) => {
     if (mainWindow) mainWindow.webContents.send('apply-volume-boost', data.volumeBoost);
 });
 
+ipcMain.handle('get-app-version', () => app.getVersion());
+
+ipcMain.handle('check-for-updates', () => new Promise((resolve) => {
+    let settled = false;
+    const done = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        autoUpdater.removeListener('update-available',     onAvail);
+        autoUpdater.removeListener('update-not-available', onNone);
+        autoUpdater.removeListener('error',                onErr);
+        resolve(result);
+    };
+    const onAvail = () => done('available');
+    const onNone  = () => done('not-available');
+    const onErr   = () => done('error');
+    const timer   = setTimeout(() => done('error'), 30000);
+
+    autoUpdater.once('update-available',     onAvail);
+    autoUpdater.once('update-not-available', onNone);
+    autoUpdater.once('error',                onErr);
+
+    try { autoUpdater.checkForUpdates(); }
+    catch (_) { done('error'); }
+}));
+
 // ─── IPC — WINDOW CONTROLS ───────────────────────────────────────────────────
 
 ipcMain.on('window-minimize', () => mainWindow?.minimize());
