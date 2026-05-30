@@ -124,13 +124,31 @@ function createWindow() {
     });
     mainWindow.addBrowserView(contentView);
 
+    let isHtmlFullscreen = false;
+
     function updateContentBounds() {
         if (!mainWindow || mainWindow.isDestroyed() || !contentView) return;
+        if (isHtmlFullscreen) return;
         const [w, h] = mainWindow.getContentSize();
         contentView.setBounds({ x: 0, y: 30, width: w, height: h - 30 });
     }
     updateContentBounds();
     mainWindow.on('resize', updateContentBounds);
+
+    // When the iframe player goes fullscreen, expand the content view to cover
+    // the full window (including the title bar row). The BrowserView renders on
+    // top of titlebar.html, so setting y=0 hides it automatically.
+    contentView.webContents.on('enter-html-full-screen', () => {
+        isHtmlFullscreen = true;
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const [w, h] = mainWindow.getContentSize();
+        contentView.setBounds({ x: 0, y: 0, width: w, height: h });
+    });
+
+    contentView.webContents.on('leave-html-full-screen', () => {
+        isHtmlFullscreen = false;
+        updateContentBounds();
+    });
 
     contentView.webContents.loadURL(url.startsWith('http') ? url : `https://${url}`);
 
