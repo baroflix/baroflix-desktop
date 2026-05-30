@@ -1,17 +1,4 @@
 const { ipcRenderer } = require('electron');
-const path = require('path');
-const fs   = require('fs');
-
-// ─── LOGO ────────────────────────────────────────────────────────────────────
-// Load as base64 so it works inside https://baroflix.github.io.
-// Wrapped in try-catch so a missing file never crashes the whole preload.
-let LOGO_B64 = null;
-try {
-    LOGO_B64 = 'data:image/png;base64,' +
-        fs.readFileSync(path.join(__dirname, 'images', 'baroflix_oneline.png')).toString('base64');
-} catch (e) {
-    console.warn('[baroflix] Could not load logo:', e.message);
-}
 
 // ─── STATE ───────────────────────────────────────────────────────────────────
 
@@ -45,112 +32,35 @@ ipcRenderer.send('get-settings');
 ipcRenderer.on('settings-data', (_e, d) => { currentVolumeBoost = d.volumeBoost || 100; });
 ipcRenderer.on('apply-volume-boost', (_e, v) => { currentVolumeBoost = v; });
 
-// ─── TITLE BAR ───────────────────────────────────────────────────────────────
+// ─── ACCENT LINE SYNC ─────────────────────────────────────────────────────────
 
-function injectTitleBar() {
-    if (document.getElementById('bf-bar')) return;
-    if (!document.head || !document.body) return;
+let lastAccentRaw = '';
 
-    if (!document.getElementById('bf-bar-css')) {
-        const style = document.createElement('style');
-        style.id = 'bf-bar-css';
-        style.textContent = `
-            #bf-bar {
-                position:fixed;top:0;left:0;right:0;height:30px;z-index:9998;
-                display:flex;align-items:center;
-                background:rgba(9,9,9,.88);
-                backdrop-filter:blur(20px) saturate(1.4);
-                -webkit-backdrop-filter:blur(20px) saturate(1.4);
-                border-bottom:1px solid rgba(255,255,255,.04);
-                -webkit-app-region:drag;
-                user-select:none;-webkit-user-select:none;
-            }
-            #bf-bar::before {
-                content:'';position:absolute;top:0;left:15%;right:15%;height:1px;
-                background:linear-gradient(90deg,transparent,rgba(255,61,61,.5) 35%,rgba(255,100,100,.65) 50%,rgba(255,61,61,.5) 65%,transparent);
-                pointer-events:none;
-            }
-            #bf-bar-logo  { padding:0 0 0 14px;display:flex;align-items:center;-webkit-app-region:no-drag;flex-shrink:0; }
-            #bf-bar-drag  { flex:1; }
-            #bf-bar-btns  { display:flex;height:100%;-webkit-app-region:no-drag;flex-shrink:0; }
-            #bf-bar-btns button {
-                display:flex;align-items:center;justify-content:center;
-                width:44px;height:100%;border:none;background:transparent;
-                color:rgba(255,255,255,.55);cursor:pointer;padding:0;outline:none;
-                transition:background .12s,color .12s;-webkit-app-region:no-drag;
-            }
-            #bf-bar-btns button:hover { background:rgba(255,255,255,.09);color:#fff; }
-            #bf-btn-close:hover       { background:#c42b1c!important;color:#fff!important; }
-            body   { padding-top:30px!important; }
-            header { top:30px!important; }
-        `;
-        document.head.appendChild(style);
-    }
-
-    const bar = document.createElement('div');
-    bar.id = 'bf-bar';
-    bar.innerHTML = `
-        <div id="bf-bar-logo"></div>
-        <div id="bf-bar-drag"></div>
-        <div id="bf-bar-btns">
-            <button id="bf-btn-min" title="Minimize">
-                <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor"><rect width="10" height="1"/></svg>
-            </button>
-            <button id="bf-btn-max" title="Maximize">
-                <svg id="bf-max-icon" width="10" height="10" viewBox="0 0 10 10"
-                     fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round">
-                    <rect x=".5" y=".5" width="9" height="9"/>
-                </svg>
-            </button>
-            <button id="bf-btn-close" title="Close">
-                <svg width="10" height="10" viewBox="0 0 10 10"
-                     fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-                    <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
-                </svg>
-            </button>
-        </div>`;
-    document.body.insertBefore(bar, document.body.firstChild);
-
-    // Set logo via .src to avoid innerHTML issues with large base64 strings
-    const logoEl = document.getElementById('bf-bar-logo');
-    if (LOGO_B64) {
-        const img = document.createElement('img');
-        img.src     = LOGO_B64;
-        img.alt     = 'baroflix';
-        img.draggable = false;
-        img.style.cssText = 'height:20px;width:auto;display:block;opacity:.92;';
-        img.onerror = () => {
-            logoEl.innerHTML = `<span style="color:#fff;font-weight:900;font-size:12px;font-family:sans-serif;letter-spacing:.3px">BARO<span style="color:#ff3d3d">FLIX</span></span>`;
-        };
-        logoEl.appendChild(img);
-    } else {
-        logoEl.innerHTML = `<span style="color:#fff;font-weight:900;font-size:12px;font-family:sans-serif;letter-spacing:.3px">BARO<span style="color:#ff3d3d">FLIX</span></span>`;
-    }
-
-    document.getElementById('bf-btn-min').addEventListener('click', () => ipcRenderer.send('window-minimize'));
-    document.getElementById('bf-btn-max').addEventListener('click', () => ipcRenderer.send('window-maximize'));
-    document.getElementById('bf-btn-close').addEventListener('click', () => ipcRenderer.send('window-close'));
-
-    ipcRenderer.invoke('window-is-maximized').then(isMax => setMaxIcon(isMax)).catch(() => {});
+/** Resolve any CSS color string → 'r,g,b' via a scratch canvas. */
+function parseColorRGB(css) {
+    try {
+        const c = document.createElement('canvas');
+        c.width = c.height = 1;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#ff3d3d'; // reset so stale value doesn't leak
+        ctx.fillStyle = css;
+        ctx.fillRect(0, 0, 1, 1);
+        const d = ctx.getImageData(0, 0, 1, 1).data;
+        return `${d[0]},${d[1]},${d[2]}`;
+    } catch (_) { return null; }
 }
 
-function setMaxIcon(isMax) {
-    const icon = document.getElementById('bf-max-icon');
-    if (!icon) return;
-    icon.innerHTML = isMax
-        ? `<rect x="2.5" y=".5" width="7" height="7"/>
-           <rect x=".5" y="2.5" width="7" height="7" fill="rgba(9,9,9,.85)"/>
-           <rect x=".5" y="2.5" width="7" height="7"/>`
-        : `<rect x=".5" y=".5" width="9" height="9"/>`;
-}
+function syncAccentColor() {
+    const raw = getComputedStyle(document.documentElement)
+                    .getPropertyValue('--accent').trim();
+    if (!raw || raw === lastAccentRaw) return;
+    lastAccentRaw = raw;
 
-// Register maximize icon updater once (not per injectTitleBar call)
-ipcRenderer.on('window-maximized', (_e, isMax) => setMaxIcon(isMax));
+    const rgb = parseColorRGB(raw);
+    if (!rgb) return;
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', injectTitleBar);
-} else {
-    injectTitleBar();
+    // Forward to main process → title bar window
+    ipcRenderer.send('accent-color-changed', rgb);
 }
 
 // ─── APP SETTINGS PANEL (injected into /settings) ────────────────────────────
@@ -459,13 +369,20 @@ async function fetchEpisodeInfo(tvId, season, episode) {
 // Baroflix renders <iframe src="https://player.videasy.net/{type}/{id}/..."> via FullscreenPlayer.
 // URL paths:  /movie/{id}          /tv/{id}/{season}/{episode}          /anime/{id}/{episode}
 
-function detectPlayer() {
+function detectPlayer(overrideUrl) {
     try {
-        const iframe = document.querySelector('iframe[src*="player.videasy.net"]') ||
-                       document.querySelector('iframe[src*="videasy.net"]');
-        if (!iframe || !iframe.src) return null;
+        // Prefer the live frame URL from the main process — it tracks internal
+        // navigation (e.g. Next Episode) that never updates the DOM src attribute.
+        let src = overrideUrl;
+        if (!src) {
+            const iframe = document.querySelector('iframe[src*="player.videasy.net"]') ||
+                           document.querySelector('iframe[src*="videasy.net"]');
+            if (!iframe || !iframe.src) return null;
+            src = iframe.src;
+        }
+        if (!src.includes('videasy.net')) return null;
 
-        const url   = new URL(iframe.src);
+        const url   = new URL(src);
         const parts = url.pathname.split('/').filter(Boolean);
         if (parts.length < 2) return null;
 
@@ -486,7 +403,7 @@ function detectPlayer() {
 
 // Track playback state for pause detection and timestamp extrapolation.
 // Returns { currentTime, isPlaying }.
-async function updatePlaybackTracking(mediaType, id, season, episode) {
+async function updatePlaybackTracking(mediaType, id, season, episode, iframeData) {
     const key = `${mediaType}-${id}-${season}-${episode}`;
     const now = Date.now();
 
@@ -502,15 +419,11 @@ async function updatePlaybackTracking(mediaType, id, season, episode) {
         lastIframeWall = now;
     }
 
-    let dataFromIframe = null;
-    try {
-        dataFromIframe = await ipcRenderer.invoke('get-iframe-time');
-    } catch (_) {}
-
-    if (dataFromIframe !== null) {
-        return { 
-            currentTime: dataFromIframe.time, 
-            isPlaying: !dataFromIframe.paused 
+    // iframeData is pre-fetched by the main loop (avoids a second IPC round-trip)
+    if (iframeData) {
+        return {
+            currentTime: iframeData.time,
+            isPlaying:   !iframeData.paused
         };
     }
 
@@ -573,7 +486,7 @@ setInterval(async () => {
     if (mainLoopRunning) return;
     mainLoopRunning = true;
     try {
-        if (!document.getElementById('bf-bar')) injectTitleBar();
+        syncAccentColor();
 
         applyVolumeBoost();
 
@@ -586,7 +499,14 @@ setInterval(async () => {
         }
 
         // ── RPC ──────────────────────────────────────────────────────────────
-        const playing = detectPlayer();
+        // Fetch the real frame URL + playback state from the main process.
+        // frame.url reflects internal navigation (Next Episode), unlike iframe.src.
+        let iframeData = null;
+        if (document.querySelector('iframe[src*="videasy.net"]')) {
+            try { iframeData = await ipcRenderer.invoke('get-iframe-time'); } catch (_) {}
+        }
+
+        const playing = detectPlayer(iframeData?.frameUrl);
 
         if (!playing) {
             const snap = `idle:${window.location.pathname}`;
@@ -623,7 +543,7 @@ setInterval(async () => {
             if (epInfo?.duration) duration = epInfo.duration;
         }
 
-        const { currentTime, isPlaying } = await updatePlaybackTracking(mediaType, id, season, episode);
+        const { currentTime, isPlaying } = await updatePlaybackTracking(mediaType, id, season, episode, iframeData);
 
         const snap = JSON.stringify({ showTitle, episodeName, poster, duration, isPlaying });
         const now  = Date.now();

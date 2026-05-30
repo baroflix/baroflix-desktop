@@ -35,6 +35,8 @@
       "index.js",
       "preload.js",
       "settings.html",
+      "titlebar.html",
+      "splash.html",
       "build/**",
       "images/**"
     ],

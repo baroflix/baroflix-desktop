@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 30px; overflow: hidden; background: rgba(9,9,9,.88); }
+    body {
+      display: flex;
+      align-items: center;
+      -webkit-app-region: drag;
+      user-select: none;
+      -webkit-user-select: none;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      position: relative;
+    }
+    #accent {
+      position: absolute;
+      top: 0; left: 15%; right: 15%; height: 1px;
+      background: linear-gradient(90deg,
+        transparent,
+        rgba(255,61,61,.5) 35%,
+        rgba(255,61,61,.65) 50%,
+        rgba(255,61,61,.5) 65%,
+        transparent
+      );
+      pointer-events: none;
+    }
+    #logo {
+      padding: 0 0 0 14px;
+      display: flex;
+      align-items: center;
+      -webkit-app-region: no-drag;
+      flex-shrink: 0;
+    }
+    #logo img { height: 20px; width: auto; display: block; opacity: .92; }
+    #logo .fallback {
+      color: #fff; font-weight: 900; font-size: 12px;
+      font-family: sans-serif; letter-spacing: .3px;
+    }
+    #logo .fallback span { color: #ff3d3d; }
+    #drag { flex: 1; }
+    #btns { display: flex; height: 100%; -webkit-app-region: no-drag; flex-shrink: 0; }
+    #btns button {
+      display: flex; align-items: center; justify-content: center;
+      width: 44px; height: 100%; border: none; background: transparent;
+      color: rgba(255,255,255,.55); cursor: pointer; padding: 0; outline: none;
+      transition: background .12s, color .12s;
+      -webkit-app-region: no-drag;
+    }
+    #btns button:hover { background: rgba(255,255,255,.09); color: #fff; }
+    #btn-close:hover   { background: #c42b1c !important; color: #fff !important; }
+  </style>
+</head>
+<body>
+  <div id="accent"></div>
+  <div id="logo">
+    <img src="./images/baroflix_oneline.png" alt="baroflix" draggable="false"
+         onerror="this.style.display='none';document.getElementById('logo-fb').style.display=''">
+    <div id="logo-fb" class="fallback" style="display:none">BARO<span>FLIX</span></div>
+  </div>
+  <div id="drag"></div>
+  <div id="btns">
+    <button id="btn-min" title="Minimize">
+      <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor"><rect width="10" height="1"/></svg>
+    </button>
+    <button id="btn-max" title="Maximize">
+      <svg id="max-icon" width="10" height="10" viewBox="0 0 10 10"
+           fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round">
+        <rect x=".5" y=".5" width="9" height="9"/>
+      </svg>
+    </button>
+    <button id="btn-close" title="Close">
+      <svg width="10" height="10" viewBox="0 0 10 10"
+           fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+        <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
+      </svg>
+    </button>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    document.getElementById('btn-min').addEventListener('click', () => ipcRenderer.send('window-minimize'));
+    document.getElementById('btn-max').addEventListener('click', () => ipcRenderer.send('window-maximize'));
+    document.getElementById('btn-close').addEventListener('click', () => ipcRenderer.send('window-close'));
+
+    function setMaxIcon(isMax) {
+      document.getElementById('max-icon').innerHTML = isMax
+        ? '<rect x="2.5" y=".5" width="7" height="7"/><rect x=".5" y="2.5" width="7" height="7" fill="rgba(9,9,9,.85)"/><rect x=".5" y="2.5" width="7" height="7"/>'
+        : '<rect x=".5" y=".5" width="9" height="9"/>';
+    }
+    ipcRenderer.invoke('window-is-maximized').then(setMaxIcon).catch(() => {});
+    ipcRenderer.on('window-maximized', (_e, isMax) => setMaxIcon(isMax));
+
+    // Accent line — updated whenever the website's --accent variable changes
+    ipcRenderer.on('accent-color', (_e, rgb) => {
+      document.getElementById('accent').style.background =
+        `linear-gradient(90deg,transparent,rgba(${rgb},.5) 35%,rgba(${rgb},.65) 50%,rgba(${rgb},.5) 65%,transparent)`;
+    });
+  </script>
+</body>
+</html>

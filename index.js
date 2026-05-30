@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, screen, shell } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, screen, shell } = require('electron');
 const path = require('path');
 const Store = require('electron-store');
 const DiscordRPC = require('discord-rpc');
@@ -20,13 +20,13 @@ if (!gotTheLock) {
             mainWindow.focus();
         }
         const url = commandLine.find(arg => arg.startsWith('baroflix://'));
-        if (url && mainWindow) {
+        if (url && contentView) {
             const defaultUrl = 'https://baroflix.github.io';
             const baseUrl = store.get('customUrl', defaultUrl);
             const finalBaseUrl = baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`;
             try {
                 const parsedUrl = new URL(url);
-                mainWindow.loadURL(finalBaseUrl + (finalBaseUrl.endsWith('/') ? '' : '/') + parsedUrl.hash);
+                contentView.webContents.loadURL(finalBaseUrl + (finalBaseUrl.endsWith('/') ? '' : '/') + parsedUrl.hash);
             } catch (e) {
                 console.error('Failed to parse deep link URL', e);
             }
@@ -44,13 +44,13 @@ if (process.defaultApp) {
 
 app.on('open-url', (event, url) => {
     event.preventDefault();
-    if (mainWindow && url.startsWith('baroflix://')) {
+    if (contentView && url.startsWith('baroflix://')) {
         const defaultUrl = 'https://baroflix.github.io';
         const baseUrl = store.get('customUrl', defaultUrl);
         const finalBaseUrl = baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`;
         try {
             const parsedUrl = new URL(url);
-            mainWindow.loadURL(finalBaseUrl + (finalBaseUrl.endsWith('/') ? '' : '/') + parsedUrl.hash);
+            contentView.webContents.loadURL(finalBaseUrl + (finalBaseUrl.endsWith('/') ? '' : '/') + parsedUrl.hash);
         } catch (e) {
             console.error('Failed to parse open-url deep link', e);
         }
@@ -59,6 +59,7 @@ app.on('open-url', (event, url) => {
 
 let mainWindow;
 let splashWindow;
+let contentView;   // BrowserView — holds the website, starts at y = 30
 let rpc;
 
 // ─── DISCORD RPC ─────────────────────────────────────────────────────────────
@@ -94,6 +95,8 @@ function createWindow() {
     const defaultUrl = 'https://baroflix.github.io';
     const url = store.get('customUrl', defaultUrl);
 
+    // Main window: hosts only the 30 px title bar (titlebar.html).
+    // nodeIntegration is required so titlebar.html can use require('electron').
     mainWindow = new BrowserWindow({
         width: 1280, height: 720,
         minWidth: 800, minHeight: 500,
@@ -102,6 +105,16 @@ function createWindow() {
         backgroundColor: '#090909',
         icon: path.join(__dirname, 'build', process.platform === 'win32' ? 'icon2.ico' : 'icon2.png'),
         webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false
+        }
+    });
+    mainWindow.setMenuBarVisibility(false);
+    mainWindow.loadFile('titlebar.html');
+
+    // Content view: loads the website, positioned below the title bar.
+    contentView = new BrowserView({
+        webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
@@ -109,21 +122,35 @@ function createWindow() {
             autoplayPolicy: 'no-user-gesture-required'
         }
     });
+    mainWindow.addBrowserView(contentView);
 
-    mainWindow.setMenuBarVisibility(false);
-    mainWindow.loadURL(url.startsWith('http') ? url : `https://${url}`);
+    function updateContentBounds() {
+        if (!mainWindow || mainWindow.isDestroyed() || !contentView) return;
+        const [w, h] = mainWindow.getContentSize();
+        contentView.setBounds({ x: 0, y: 30, width: w, height: h - 30 });
+    }
+    updateContentBounds();
+    mainWindow.on('resize', updateContentBounds);
+
+    contentView.webContents.loadURL(url.startsWith('http') ? url : `https://${url}`);
 
     const splashStart = Date.now();
-    mainWindow.once('ready-to-show', () => {
+    contentView.webContents.once('did-finish-load', () => {
         const delay = Math.max(0, 2400 - (Date.now() - splashStart));
         setTimeout(() => { closeSplash(); mainWindow.show(); }, delay);
     });
+    // Fallback: always show after 10 s even on slow connections
+    setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+            closeSplash(); mainWindow.show();
+        }
+    }, 10000);
 
     mainWindow.on('maximize',   () => mainWindow.webContents.send('window-maximized', true));
     mainWindow.on('unmaximize', () => mainWindow.webContents.send('window-maximized', false));
 
-    // ─── Popup blocker ────────────────────────────────────────────────────────
-    mainWindow.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
+    // ─── Popup blocker (on content view) ─────────────────────────────────────
+    contentView.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
         const isOAuth = openedUrl.includes('accounts.google.com') ||
                         openedUrl.includes('supabase.co') ||
                         openedUrl.includes('github.com/login');
@@ -131,7 +158,7 @@ function createWindow() {
         return { action: 'deny' };
     });
 
-    mainWindow.webContents.on('will-navigate', (event, navUrl) => {
+    contentView.webContents.on('will-navigate', (event, navUrl) => {
         try {
             const parsed  = new URL(navUrl);
             const base    = store.get('customUrl', defaultUrl);
@@ -152,7 +179,7 @@ function createWindow() {
         } catch (_) { event.preventDefault(); }
     });
 
-    mainWindow.on('closed', () => { mainWindow = null; });
+    mainWindow.on('closed', () => { mainWindow = null; contentView = null; });
     registerShortcuts();
 }
 
@@ -188,10 +215,10 @@ function togglePip() {
 function registerShortcuts() {
     globalShortcut.unregisterAll();
 
-    // Ctrl+, → navigate to /settings inside the main window
+    // Ctrl+, → navigate to /settings inside the content view
     globalShortcut.register('CommandOrControl+,', () => {
-        if (!mainWindow) return;
-        mainWindow.webContents.executeJavaScript(
+        if (!contentView) return;
+        contentView.webContents.executeJavaScript(
             `window.history.pushState(null,'','/settings');` +
             `window.dispatchEvent(new PopStateEvent('popstate',{state:null}));`
         ).catch(() => {});
@@ -292,10 +319,15 @@ ipcMain.on('save-settings', (_event, data) => {
         }
     }
 
-    if (mainWindow) mainWindow.webContents.send('apply-volume-boost', data.volumeBoost);
+    if (contentView) contentView.webContents.send('apply-volume-boost', data.volumeBoost);
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
+
+// Forward accent colour from content preload → title bar
+ipcMain.on('accent-color-changed', (_event, rgb) => {
+    mainWindow?.webContents.send('accent-color', rgb);
+});
 
 ipcMain.handle('check-for-updates', () => new Promise((resolve) => {
     let settled = false;
@@ -354,7 +386,7 @@ ipcMain.handle('get-iframe-time', async (event) => {
                             return v ? { time: v.currentTime, paused: v.paused } : null;
                         })()
                     `);
-                    if (data && typeof data.time === 'number') return data;
+                    if (data && typeof data.time === 'number') return { ...data, frameUrl: frame.url };
                 } catch (e) {}
             }
         }
