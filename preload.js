@@ -32,6 +32,20 @@ ipcRenderer.send('get-settings');
 ipcRenderer.on('settings-data', (_e, d) => { currentVolumeBoost = d.volumeBoost || 100; });
 ipcRenderer.on('apply-volume-boost', (_e, v) => { currentVolumeBoost = v; });
 
+// ─── SETTINGS CACHE ──────────────────────────────────────────────────────────
+// Pre-fetch at startup so injectAppSettings() can run synchronously.
+
+let cachedSettings   = null;
+let cachedAppVersion = '';
+
+Promise.all([
+    ipcRenderer.invoke('get-settings-data').catch(() => null),
+    ipcRenderer.invoke('get-app-version').catch(() => '')
+]).then(([settings, version]) => {
+    cachedSettings   = settings;
+    cachedAppVersion = version;
+});
+
 // ─── ACCENT LINE SYNC ─────────────────────────────────────────────────────────
 
 let lastAccentRaw = '';
@@ -67,12 +81,27 @@ function syncAccentColor() {
 
 let settingsInjected = false;
 
-async function injectAppSettings() {
+// Inject immediately when the user navigates to /settings instead of waiting
+// up to 2 s for the main loop. Retries up to 15 × 50 ms while React renders
+// the container, then the loop acts as a final safety net.
+function tryInjectSettings(retries = 15) {
+    if (window.location.pathname !== '/settings') return;
+    if (document.getElementById('bf-app-settings')) return;
+    injectAppSettings();
+    if (!settingsInjected && retries > 0)
+        setTimeout(() => tryInjectSettings(retries - 1), 50);
+}
+
+const _origPushState = history.pushState.bind(history);
+history.pushState = function (...args) { _origPushState(...args); tryInjectSettings(); };
+window.addEventListener('popstate', tryInjectSettings);
+
+function injectAppSettings() {
     if (document.getElementById('bf-app-settings')) return;
     settingsInjected = false;
 
     // Find the settings content container (baroflix uses .space-y-6 inside max-w-3xl)
-    const container = document.querySelector('.space-y-6') 
+    const container = document.querySelector('.space-y-6')
                    || document.querySelector('.flex.flex-col.gap-6')
                    || document.querySelector('.max-w-3xl')
                    || document.querySelector('main > div > div')
@@ -80,14 +109,10 @@ async function injectAppSettings() {
                    || document.querySelector('main');
     if (!container) return;
 
-    // Load current values from main process
-    let cfg = {}, appVersion = '';
-    try {
-        [cfg, appVersion] = await Promise.all([
-            ipcRenderer.invoke('get-settings-data'),
-            ipcRenderer.invoke('get-app-version').catch(() => '')
-        ]);
-    } catch (_) { return; }
+    // Use pre-fetched cache; if it isn't warm yet the 2 s loop will retry
+    const cfg        = cachedSettings;
+    const appVersion = cachedAppVersion;
+    if (!cfg) return;
 
     const A = 'var(--accent, #ff3d3d)';
 
@@ -303,14 +328,16 @@ async function injectAppSettings() {
 
     // Save
     document.getElementById('bf-save-btn').addEventListener('click', () => {
-        ipcRenderer.send('save-settings', {
+        const saved = {
             customUrl:            'https://baroflix.github.io',
             pipShortcut:          document.getElementById('bf-pip-input').value,
             discordEnabled:       document.getElementById('bf-discord').checked,
             cloudflareDns:        document.getElementById('bf-dns').checked,
             hardwareAcceleration: document.getElementById('bf-hwaccel').checked,
             volumeBoost:          parseInt(document.getElementById('bf-vol-range').value, 10)
-        });
+        };
+        ipcRenderer.send('save-settings', saved);
+        if (cachedSettings) Object.assign(cachedSettings, saved); // keep cache in sync
         const ok = document.getElementById('bf-save-ok');
         ok.style.display = 'block';
         setTimeout(() => { ok.style.display = 'none'; }, 2000);
