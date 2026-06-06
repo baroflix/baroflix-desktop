@@ -150,6 +150,22 @@ function createWindow() {
         updateContentBounds();
     });
 
+    // Redundantny handler dla cross-origin iframe'ów (np. animeplay.cfd) —
+    // enter/leave-html-full-screen nie zawsze odpala się dla zagnieżdżonych
+    // cross-origin iframe'ów w Electronie. Preload słucha fullscreenchange
+    // na dokumencie baroflix i wysyła IPC do nas.
+    const onPreloadFullscreen = (_event, active) => {
+        isHtmlFullscreen = active;
+        if (!mainWindow || mainWindow.isDestroyed() || !contentView) return;
+        if (active) {
+            const [w, h] = mainWindow.getContentSize();
+            contentView.setBounds({ x: 0, y: 0, width: w, height: h });
+        } else {
+            updateContentBounds();
+        }
+    };
+    ipcMain.on('html-fullscreen-change', onPreloadFullscreen);
+
     contentView.webContents.loadURL(url.startsWith('http') ? url : `https://${url}`);
 
     const splashStart = Date.now();
@@ -197,7 +213,11 @@ function createWindow() {
         } catch (_) { event.preventDefault(); }
     });
 
-    mainWindow.on('closed', () => { mainWindow = null; contentView = null; });
+    mainWindow.on('closed', () => {
+        ipcMain.removeListener('html-fullscreen-change', onPreloadFullscreen);
+        mainWindow = null;
+        contentView = null;
+    });
     registerShortcuts();
 }
 
@@ -245,6 +265,16 @@ function registerShortcuts() {
     const pip = store.get('pipShortcut', 'CommandOrControl+P');
     try { globalShortcut.register(pip, () => togglePip()); }
     catch (err) { console.log('PiP shortcut failed:', err.message); }
+
+    // F12 → DevTools dla content view w osobnym oknie (fix dla BrowserView)
+    globalShortcut.register('F12', () => {
+        if (!contentView) return;
+        if (contentView.webContents.isDevToolsOpened()) {
+            contentView.webContents.closeDevTools();
+        } else {
+            contentView.webContents.openDevTools({ mode: 'detach' });
+        }
+    });
 }
 
 // ─── APP LIFECYCLE ────────────────────────────────────────────────────────────
@@ -394,20 +424,48 @@ ipcMain.handle('get-iframe-time', async (event) => {
             }
             return frames;
         };
+
         const allFrames = getAllFrames(event.sender.mainFrame);
+        const defaultUrl = store.get('customUrl', 'https://baroflix.github.io');
+        const baseHost   = (() => { try { return new URL(defaultUrl.startsWith('http') ? defaultUrl : `https://${defaultUrl}`).hostname; } catch (_) { return 'baroflix.github.io'; } })();
+
+        // Skanuj WSZYSTKIE ramki poza stroną główną i wybierz wideo
+        // z najdłuższym czasem trwania (właściwy player, nie thumbnail/reklama).
+        let best = null;
+        let bestPlayerFrameUrl = null;
+
         for (const frame of allFrames) {
-            if (frame.url && frame.url.includes('videasy.net')) {
-                try {
-                    const data = await frame.executeJavaScript(`
-                        (() => {
-                            const v = document.querySelector('video');
-                            return v ? { time: v.currentTime, paused: v.paused } : null;
-                        })()
-                    `);
-                    if (data && typeof data.time === 'number') return { ...data, frameUrl: frame.url };
-                } catch (e) {}
-            }
+            if (!frame.url || frame.url === 'about:blank') continue;
+            try {
+                const frameHost = new URL(frame.url).hostname;
+                if (frameHost === baseHost) continue; // pomiń główną stronę
+            } catch (_) { continue; }
+
+            try {
+                const data = await frame.executeJavaScript(`
+                    (() => {
+                        const videos = Array.from(document.querySelectorAll('video'))
+                            .filter(v => v.readyState >= 1);
+                        if (!videos.length) return null;
+                        // Wybierz wideo z największym duration (właściwy player)
+                        const v = videos.reduce((b, v) =>
+                            (v.duration || 0) > (b?.duration || 0) ? v : b, videos[0]);
+                        return { time: v.currentTime, paused: v.paused, duration: v.duration || 0 };
+                    })()
+                `);
+                if (data && typeof data.time === 'number') {
+                    // Preferuj ramkę z dłuższym duration
+                    if (!best || data.duration > (best.duration || 0)) {
+                        best = data;
+                        // Zwróć URL ramki playera (videasy/animeplay) do detectPlayer
+                        const isPlayerFrame = frame.url.includes('videasy.net') || frame.url.includes('animeplay.cfd');
+                        if (isPlayerFrame) bestPlayerFrameUrl = frame.url;
+                    }
+                }
+            } catch (_) {}
         }
+
+        if (best) return { ...best, frameUrl: bestPlayerFrameUrl };
     } catch (e) {
         console.error('get-iframe-time error:', e);
     }
@@ -419,7 +477,7 @@ ipcMain.on('update-playback', (_event, data) => {
 
     const { showTitle, episodeName, currentTime, duration, isPlaying, poster } = data;
 
-    if (!isPlaying && (!duration || duration === 0)) {
+    if (!showTitle && !isPlaying && (!duration || duration === 0)) {
         setActivityRaw({
             type: 0, name: 'baroflix', details: 'browsing',
             largeImageKey: 'icon', largeImageText: 'baroflix',

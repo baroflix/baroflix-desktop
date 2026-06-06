@@ -20,9 +20,10 @@ let pbStored  = -1;   // last timestamp read from localStorage
 let pbWall    = 0;    // wall clock (ms) when pbStored was last updated
 let pbPlaying = false;
 
-let lastIframeTime = -1;
-let lastIframeWall = 0;
-let iframePlaying = false;
+let lastIframeTime  = -1;
+let lastIframeWall  = 0;
+let iframePlaying   = false;
+let iframePausedCount = 0;   // debounce: ile kolejnych ticków video.paused=true
 
 const TMDB_KEY = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
 
@@ -76,6 +77,14 @@ function syncAccentColor() {
     // Forward to main process → title bar window
     ipcRenderer.send('accent-color-changed', rgb);
 }
+
+// ─── FULLSCREEN SYNC ─────────────────────────────────────────────────────────
+// enter/leave-html-full-screen na webContents nie odpala się niezawodnie
+// dla cross-origin iframe'ów (animeplay.cfd). Słuchamy fullscreenchange
+// bezpośrednio na dokumencie i przekazujemy do głównego procesu.
+document.addEventListener('fullscreenchange', () => {
+    ipcRenderer.send('html-fullscreen-change', !!document.fullscreenElement);
+});
 
 // ─── APP SETTINGS PANEL (injected into /settings) ────────────────────────────
 
@@ -344,6 +353,60 @@ function injectAppSettings() {
     });
 }
 
+// ─── ANILIST ──────────────────────────────────────────────────────────────────
+
+async function fetchAnimeInfoAnilist(anilistId, currentEpisode = null) {
+    const cacheKey = `al-${anilistId}`;
+    if (fetchingNow.has(cacheKey) || mediaCache[cacheKey]?.fetched) return;
+    fetchingNow.add(cacheKey);
+    try {
+        const query = `query ($id: Int) {
+            Media(id: $id, type: ANIME) {
+                title { english romaji }
+                coverImage { large }
+                duration
+                idMal
+            }
+        }`;
+        const res  = await fetch('https://graphql.anilist.co', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body:    JSON.stringify({ query, variables: { id: parseInt(anilistId) } })
+        });
+        const { data } = await res.json();
+        const media = data?.Media;
+        if (media) {
+            if (!mediaCache[cacheKey]) mediaCache[cacheKey] = { episodeInfo: {} };
+            mediaCache[cacheKey].title    = media.title?.english || media.title?.romaji || '';
+            mediaCache[cacheKey].duration = (media.duration || 0) * 60;
+            mediaCache[cacheKey].poster   = media.coverImage?.large || '';
+            mediaCache[cacheKey].malId    = media.idMal || null;
+            mediaCache[cacheKey].fetched  = true;
+            // Prefetch tytułu bieżącego odcinka od razu po załadowaniu AniList
+            // (nie czekamy na kolejny tick pętli głównej)
+            if (media.idMal && currentEpisode) {
+                fetchAnimeEpisodeJikan(media.idMal, currentEpisode);
+            }
+        }
+    } catch (_) {}
+    fetchingNow.delete(cacheKey);
+}
+
+async function fetchAnimeEpisodeJikan(malId, episode) {
+    if (!malId) return;
+    const fetchKey = `jikan-${malId}-${episode}`;
+    if (fetchingNow.has(fetchKey) || mediaCache[fetchKey] !== undefined) return;
+    fetchingNow.add(fetchKey);
+    try {
+        const res  = await fetch(`https://api.jikan.moe/v4/anime/${malId}/episodes/${episode}`);
+        const { data } = await res.json();
+        mediaCache[fetchKey] = data?.title || null;
+    } catch (_) {
+        mediaCache[fetchKey] = null;
+    }
+    fetchingNow.delete(fetchKey);
+}
+
 // ─── TMDB ─────────────────────────────────────────────────────────────────────
 
 function toApiType(raw) {
@@ -403,16 +466,30 @@ function detectPlayer(overrideUrl) {
         let src = overrideUrl;
         if (!src) {
             const iframe = document.querySelector('iframe[src*="player.videasy.net"]') ||
-                           document.querySelector('iframe[src*="videasy.net"]');
+                           document.querySelector('iframe[src*="videasy.net"]')         ||
+                           document.querySelector('iframe[src*="animeplay.cfd"]');
             if (!iframe || !iframe.src) return null;
             src = iframe.src;
         }
-        if (!src.includes('videasy.net')) return null;
+
+        const isVideasy   = src.includes('videasy.net');
+        const isAnimeplay = src.includes('animeplay.cfd');
+        if (!isVideasy && !isAnimeplay) return null;
 
         const url   = new URL(src);
         const parts = url.pathname.split('/').filter(Boolean);
-        if (parts.length < 2) return null;
 
+        // animeplay.cfd → /stream/ani/{anilistId}/{episode}/{lang}
+        if (isAnimeplay) {
+            if (parts.length < 4) return null;
+            // parts: ['stream', 'ani', id, episode, lang?]
+            const id      = parts[2];
+            const episode = parseInt(parts[3]) || 1;
+            return { mediaType: 'anime', id, season: 0, episode, provider: 'anilist' };
+        }
+
+        // videasy.net → /movie/{id}  /tv/{id}/{season}/{episode}  /anime/{id}/{episode}
+        if (parts.length < 2) return null;
         const mediaType = parts[0];             // 'movie' | 'tv' | 'anime'
         const id        = parts[1];
         let   season = 0, episode = 0;
@@ -424,7 +501,7 @@ function detectPlayer(overrideUrl) {
             episode = parseInt(parts[2]) || 1;
         }
 
-        return { mediaType, id, season, episode };
+        return { mediaType, id, season, episode, provider: 'tmdb' };
     } catch (_) { return null; }
 }
 
@@ -436,22 +513,38 @@ async function updatePlaybackTracking(mediaType, id, season, episode, iframeData
 
     // Reset tracking when content changes (different show/episode)
     if (key !== pbKey) {
-        pbKey     = key;
-        pbPlaying = false;
-        pbStored  = -1;
-        pbWall    = now;
-
-        iframePlaying = false;
-        lastIframeTime = -1;
-        lastIframeWall = now;
+        pbKey           = key;
+        pbPlaying       = false;
+        pbStored        = -1;
+        pbWall          = now;
+        iframePlaying   = false;
+        lastIframeTime  = -1;
+        lastIframeWall  = now;
+        iframePausedCount = 0;
     }
 
     // iframeData is pre-fetched by the main loop (avoids a second IPC round-trip)
     if (iframeData) {
-        return {
-            currentTime: iframeData.time,
-            isPlaying:   !iframeData.paused
-        };
+        const prevTime = lastIframeTime;
+        lastIframeTime = iframeData.time;
+        lastIframeWall = now;
+
+        // Wykrywanie odtwarzania przez przyrost czasu, NIE przez video.paused
+        // (animeplay.cfd ma zagnieżdżony player — video.paused bywa zawsze true).
+        // Loop działa co 2 s, więc gramy jeśli czas urósł o ≥ 0.5 s.
+        const timeAdvanced = prevTime >= 0 && iframeData.time >= prevTime + 0.5;
+
+        if (timeAdvanced) {
+            iframePausedCount = 0;   // czas rośnie → na pewno gra
+        } else if (iframeData.paused) {
+            iframePausedCount += 3;  // paused=true i czas stoi → natychmiast pauza (≥3)
+        } else {
+            iframePausedCount++;     // paused=false ale czas stoi → buforowanie, poczekaj
+        }
+
+        // Paused po ≥3 punktach: natychmiast przy paused=true, po ~6 s przy buforowaniu
+        const isPlaying = iframePausedCount < 3;
+        return { currentTime: iframeData.time, isPlaying };
     }
 
     let stored = 0;
@@ -528,8 +621,10 @@ setInterval(async () => {
         // ── RPC ──────────────────────────────────────────────────────────────
         // Fetch the real frame URL + playback state from the main process.
         // frame.url reflects internal navigation (Next Episode), unlike iframe.src.
+
         let iframeData = null;
-        if (document.querySelector('iframe[src*="videasy.net"]')) {
+        if (document.querySelector('iframe[src*="videasy.net"]') ||
+            document.querySelector('iframe[src*="animeplay.cfd"]')) {
             try { iframeData = await ipcRenderer.invoke('get-iframe-time'); } catch (_) {}
         }
 
@@ -549,26 +644,49 @@ setInterval(async () => {
             return;
         }
 
-        const { mediaType, id, season, episode } = playing;
-        const apiType = toApiType(mediaType);
+        const { mediaType, id, season, episode, provider } = playing;
+        const isAnilist = provider === 'anilist';
+        const cacheKey  = isAnilist ? `al-${id}` : id;
 
-        // Kick off TMDB fetches if not cached yet
-        if (!mediaCache[id]?.fetched) fetchMediaInfo(apiType, id);
-        if (season && episode)        fetchEpisodeInfo(id, season, episode);
+        // Kick off metadata fetches if not cached yet
+        if (isAnilist) {
+            fetchAnimeInfoAnilist(id, episode);
+        } else {
+            const apiType = toApiType(mediaType);
+            if (!mediaCache[id]?.fetched) fetchMediaInfo(apiType, id);
+            if (mediaType === 'anime' && episode) fetchEpisodeInfo(id, 1, episode);
+            else if (season && episode)           fetchEpisodeInfo(id, season, episode);
+        }
 
-        const cache = mediaCache[id] || {};
+        const cache = mediaCache[cacheKey] || {};
         const showTitle = cache.title || '';
         let episodeName = '';
         let duration    = cache.duration || 0;
         const poster    = cache.poster   || '';
 
-        if (season && episode) {
+        if (isAnilist && episode) {
+            const malId    = cache.malId;
+            const jikanKey = `jikan-${malId}-${episode}`;
+            fetchAnimeEpisodeJikan(malId, episode);
+            const epTitle  = mediaCache[jikanKey] || null;
+            episodeName = `S01E${String(episode).padStart(2, '0')}`;
+            if (epTitle) episodeName += `: ${epTitle}`;
+        } else if (mediaType === 'anime' && episode) {
+            const epKey  = `1-${episode}`;
+            const epInfo = cache.episodeInfo?.[epKey];
+            episodeName  = `Ep ${episode}`;
+            if (epInfo?.name)     episodeName += `: ${epInfo.name}`;
+            if (epInfo?.duration) duration = epInfo.duration;
+        } else if (season && episode) {
             const epKey  = `${season}-${episode}`;
             const epInfo = cache.episodeInfo?.[epKey];
             episodeName  = `S${String(season).padStart(2,'0')}E${String(episode).padStart(2,'0')}`;
             if (epInfo?.name)     episodeName += `: ${epInfo.name}`;
             if (epInfo?.duration) duration = epInfo.duration;
         }
+
+        // Jeśli iframe zwrócił realną długość wideo — użyj jej zamiast AniList/TMDB
+        if (iframeData?.duration > 60) duration = iframeData.duration;
 
         const { currentTime, isPlaying } = await updatePlaybackTracking(mediaType, id, season, episode, iframeData);
 
